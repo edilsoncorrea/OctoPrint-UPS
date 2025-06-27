@@ -1,89 +1,32 @@
-<form class="form-horizontal">
-    <h4>General</h4>
-    <div class="control-group">
-        <label class="control-label">Host</label>
-        <div class="controls">
-            <input type="text" class="input-block-level" data-bind="value: settings.plugins.ups.host">
-        </div>
+{% extends "settings.jinja2" %}
+{% block settings %}
+<div class="row">
+  <div class="col-md-6">
+    <div class="form-group">
+      <label for="settings_plugin_ups_ha_url">Endereço do Home Assistant</label>
+      <input type="text" class="form-control" id="settings_plugin_ups_ha_url" data-bind="value: settings.plugins.ups.ha_url">
     </div>
-    <div class="control-group">
-        <label class="control-label">Port</label>
-        <div class="controls">
-            <input type="number" min="1" max="65535" class="input-mini" data-bind="value: settings.plugins.ups.port">
-        </div>
+    <div class="form-group">
+      <label for="settings_plugin_ups_token">Token de Acesso (Bearer)</label>
+      <input type="text" class="form-control" id="settings_plugin_ups_token" data-bind="value: settings.plugins.ups.token">
     </div>
-    <div class="control-group">
-        <div class="controls">
-            <label class="checkbox">
-            <input type="checkbox" data-bind="checked: settings.plugins.ups.auth"> Use authentication
-            </label>
-        </div>
+    <div class="form-group">
+      <label for="settings_plugin_ups_entity_power">Entidade: UPS na Bateria</label>
+      <input type="text" class="form-control" id="settings_plugin_ups_entity_power" data-bind="value: settings.plugins.ups.entity_power">
     </div>
-    <!-- ko if: settings.plugins.ups.auth() -->
-    <div class="control-group">
-        <label class="control-label">Username</label>
-        <div class="controls">
-            <input type="text" class="input-block-level" data-bind="value: settings.plugins.ups.username">
-        </div>
+    <div class="form-group">
+      <label for="settings_plugin_ups_entity_critical">Entidade: Bateria Crítica</label>
+      <input type="text" class="form-control" id="settings_plugin_ups_entity_critical" data-bind="value: settings.plugins.ups.entity_critical">
     </div>
-    <div class="control-group">
-        <label class="control-label">Password</label>
-        <div class="controls">
-            <input type="text" class="input-block-level" data-bind="value: settings.plugins.ups.password">
-        </div>
+    <div class="form-group">
+      <label for="settings_plugin_ups_entity_shutdown">Entidade: Desligar UPS</label>
+      <input type="text" class="form-control" id="settings_plugin_ups_entity_shutdown" data-bind="value: settings.plugins.ups.entity_shutdown">
     </div>
-    <!-- /ko -->
-    <div class="control-group">
-        <label class="control-label">UPS</label>
-        <div class="controls">
-            <select data-bind="options: available_upses, value: settings.plugins.ups.ups">
-            </select>
-            <a title="Refresh" href="#" data-bind="click: function() { $root.updateUPSList(); }">
-                <i class="icon-refresh"></i>
-            </a>
-        </div>
+    <div class="checkbox">
+      <label>
+        <input type="checkbox" data-bind="checked: settings.plugins.ups.pause"> Pausar impressão automaticamente se a bateria estiver crítica
+      </label>
     </div>
-    <div class="control-group">
-        <label class="control-label">Battery Low</label>
-        <div class="controls">
-            <div class="input-append">
-                <input type="number" min="0" max="100" step="1" class="input-mini text-right" data-bind="value: settings.plugins.ups.battery_low">
-                <span class="add-on">%</span>
-            </div>
-        </div>
-    </div>
-    <div class="control-group">
-        <label class="control-label">Battery High</label>
-        <div class="controls">
-            <div class="input-append">
-                <input type="number" min="0" max="100" step="1" class="input-mini text-right" data-bind="value: settings.plugins.ups.battery_high">
-                <span class="add-on">%</span>
-            </div>
-        </div>
-    </div>
-    <br />
-
-    <h4>Behavior</h4>
-    <div class="control-group">
-        <div class="controls">
-            <label class="checkbox">
-            <input type="checkbox" data-bind="checked: settings.plugins.ups.pause"> Pause print when battery is discharging and falls below
-                <div class="input-append">
-                <input type="number" min="0" max="100" step="1" class="input-mini text-right" data-bind="value: settings.plugins.ups.pause_threshold">
-                <span class="add-on">%</span>
-                </div>
-            </label>
-            <span class="help-block">This plugin provides the <code>plugins.ups.initiated_pause</code> variable to the <code>afterPrintPaused</code> and <code>beforePrintResumed</code> <a href="https://docs.octoprint.org/en/master/features/gcode_scripts.html" target="_blank">OctoPrint GCODE Scripts</a>. You can use this to do specific actions when a job is paused or resumed after being paused by the plugin.<br/><br/>Example:<br/></span>
-            <code>
-                {% raw %}
-                    {% if plugins.ups.initiated_pause %}<br/>
-                    ; Conserve battery by turning the heaters off<br/>
-                    M104 S0 ; Turn hotend off<br/>
-                    M109 S0 ; Turn bed off<br/>
-                    {% endif %}
-                {% endraw %}
-            </code><br/><br/>
-            <span class="label label-important">Warning: The example above may cause adhesion issues<br/>depending on filament and surface.</span>
-        </div>
-    </div>
-</form>
+  </div>
+</div>
+{% endblock %}

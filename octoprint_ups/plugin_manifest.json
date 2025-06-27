@@ -1,0 +1,23 @@
+{
+  "plugin": {
+    "identifier": "ups",
+    "name": "UPS",
+    "version": "1.0.0",
+    "description": "Monitoramento de UPS via ESPHome e Home Assistant.",
+    "author": "Shawn Bruce (modificado por Edilson)",
+    "license": "AGPLv3",
+    "homepage": "https://github.com/seu-usuario/OctoPrint-UPS-Esphome",
+    "type": "plugin"
+  },
+  "softwareupdate": {
+    "ups": {
+      "displayName": "UPS",
+      "displayVersion": "1.0.0",
+      "type": "github_release",
+      "user": "seu-usuario",
+      "repo": "OctoPrint-UPS-Esphome",
+      "current": "1.0.0",
+      "pip": "https://github.com/seu-usuario/OctoPrint-UPS-Esphome/archive/{target_version}.zip"
+    }
+  }
+}

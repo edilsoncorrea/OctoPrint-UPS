@@ -10,12 +10,14 @@ from octoprint.events import Events
 import time
 import threading
 from flask import make_response, jsonify
-import nut2
+import requests
 
 try:
     from octoprint.access.permissions import Permissions
 except Exception:
     from octoprint.server import user_permission
+
+from .esphome_ups_client import EsphomeUPSClient
 
 class UPS(octoprint.plugin.StartupPlugin,
           octoprint.plugin.TemplatePlugin,
@@ -34,16 +36,12 @@ class UPS(octoprint.plugin.StartupPlugin,
 
     def get_settings_defaults(self):
         return dict(
-            host = 'localhost',
-            port = 3493,
-            auth = False,
-            username = '',
-            password = '',
-            ups = '',
-            battery_high = 70,
-            battery_low = 25,
-            pause = False,
-            pause_threshold = 50
+            ha_url = 'http://homeassistant.local:8123',
+            token = '',
+            entity_power = 'binary_sensor.ups_on_battery',
+            entity_critical = 'binary_sensor.ups_battery_critical',
+            entity_shutdown = 'switch.ups_shutdown',
+            pause = False
         )
 
 
@@ -59,131 +57,58 @@ class UPS(octoprint.plugin.StartupPlugin,
 
     def reload_settings(self):
         for k, v in self.get_settings_defaults().items():
-            if type(v) == str:
+            if isinstance(v, str):
                 v = self._settings.get([k])
-            elif type(v) == int:
-                v = self._settings.get_int([k])
-            elif type(v) == float:
-                v = self._settings.get_float([k])
-            elif type(v) == bool:
+            elif isinstance(v, bool):
                 v = self._settings.get_boolean([k])
-
             self.config[k] = v
-            self._logger.debug("{}: {}".format(k, v))
 
-
-    def check_connection(self):
-        if self.ups is None:
-            self._logger.info("Connecting...")
-        else:
-            try:
-                self.ups.ver()
-                return True
-            except (NameError, AttributeError):
-                pass
-            except (EOFError, BrokenPipeError):
-                self._logger.warning("Connection lost. Reconnecting...")
-
-        try:
-            self.ups = self.connect(self.config["host"], self.config["port"], self.config["auth"], self.config["username"], self.config["password"])
-            self.ups.ver()
-            self._logger.info("Connected!")
-            return True
-        except Exception:
-            self._logger.error("Unable to connect")
-            return False
-
-
-    def connect(self, host, port, auth, username, password):
-        if not auth or username == "":
-            username = None
-
-        if not auth or password == "":
-            password = None
-
-        return nut2.PyNUTClient(host=host, port=port, login=username, password=password)
+        self.ups = EsphomeUPSClient(
+            base_url=self.config['ha_url'],
+            entity_power=self.config['entity_power'],
+            entity_critical=self.config['entity_critical'],
+            entity_shutdown=self.config['entity_shutdown'],
+            token=self.config['token']
+        )
 
 
     def _loop(self):
-        logged_not_connected = False
+        prev_status = {}
 
-        vars = dict()
-
-        first_run = True
         while True:
-            vars_prev = vars
+            time.sleep(1)
+            status = self.ups.get_status()
 
-            if first_run:
-                first_run = False
-            else:
-                time.sleep(1)
-
-            if not self.check_connection():
-                if not logged_not_connected:
-                    logged_not_connected = True
-
+            if not status:
                 self._plugin_manager.send_plugin_message(self._identifier, dict(vars={'ups.status': 'OFFLINE'}))
                 continue
-            else:
-                if logged_not_connected:
-                    logged_not_connected = False
 
-            try:
-                vars = self.ups.list_vars(ups=self.config['ups'])
-            except nut2.PyNUTError as e:
-                msg = str(e)
-                if msg == "ERR DATA-STALE":
-                    # Basically seems like an unable to fetch / refresh data error.
-                    self._plugin_manager.send_plugin_message(self._identifier, dict(vars={'ups.status': 'OFFLINE'}))
-                    self._logger.warning(msg)
-                    continue
-                elif msg == "ERR DRIVER-NOT-CONNECTED":
-                    # Occurs when nut-driver is not running.
-                    self._plugin_manager.send_plugin_message(self._identifier, dict(vars={'ups.status': 'OFFLINE'}))
-                    self._logger.warning(msg)
-                    continue
-                else:
-                    self._logger.exception("A PyNUTError exception occurred while getting vars info")
-            except Exception:
-                self._logger.exception("An exception occurred while getting vars info")
-                continue
+            on_battery = status.get('on_battery', False)
+            critical = status.get('critical', False)
 
-            self._logger.debug(vars)
+            if on_battery and not prev_status.get('on_battery', False):
+                self._logger.info("Power lost. Running on battery.")
 
-            status_flags = vars.get('ups.status', "").split(" ")
-            status_flags_prev = vars_prev.get('ups.status', "").split(" ")
+            if not on_battery and prev_status.get('on_battery', False):
+                self._logger.info("Power restored.")
 
-            ob = "OB" in status_flags
-            ob_prev = "OB" in status_flags_prev
+            if on_battery and critical:
+                self._logger.info("Battery critical.")
+                if (self.config["pause"] and
+                    self._printer.is_printing() and
+                    not (self._printer.is_paused() or self._printer.is_pausing())):
 
-            if ob:
-                if not ob_prev:
-                    self._logger.info("Power lost. Running on battery.")
+                    self._logger.info("Battery critical. Pausing job.")
+                    self._pause_event.set()
+                    self._printer.pause_print(tag={"source:plugin", "plugin:ups"})
 
-                if (not ob_prev or
-                    vars.get('battery.charge') != vars_prev.get('battery.charge')):
-                    self._logger.info("Battery remaining {}%".format(vars['battery.charge']))
+            self.vars = {
+                'ups.status': 'OB' if on_battery else 'OL',
+                'battery.critical': critical
+            }
 
-                    if (self.config["pause"] and
-                        self._printer.is_printing() and
-                        float(vars.get('battery.charge')) < self.config["pause_threshold"] and
-                        not (self._printer.is_paused() or self._printer.is_pausing())):
-
-                        self._logger.info("Battery below threshold. Pausing job.")
-
-                        self._pause_event.set()
-
-                        tags = {"source:plugin", "plugin:ups"}
-                        self._printer.pause_print(tag=tags)
-            elif ob_prev:
-                    self._logger.info("Power restored.")
-
-            if vars.get('ups.status') != self.vars.get('ups.status'):
-                event = Events.PLUGIN_UPS_STATUS_CHANGED
-                self._event_bus.fire(event, payload=dict(vars=vars))
-
-            self._plugin_manager.send_plugin_message(self._identifier, dict(vars=vars))
-            self.vars = vars
+            self._plugin_manager.send_plugin_message(self._identifier, dict(vars=self.vars))
+            prev_status = status
 
 
     def _hook_comm_protocol_scripts(self, comm_instance, script_type, script_name, *args, **kwargs):
@@ -204,13 +129,12 @@ class UPS(octoprint.plugin.StartupPlugin,
     def on_event(self, event, payload):
         if event == Events.CLIENT_OPENED:
             self._plugin_manager.send_plugin_message(self._identifier, dict(vars=self.vars))
-            return
 
 
     def get_api_commands(self):
         return dict(
             getUPSVars=[],
-            listUPS=['host', 'port', 'auth', 'username', 'password']
+            shutdown=[]
         )
 
 
@@ -219,39 +143,21 @@ class UPS(octoprint.plugin.StartupPlugin,
 
 
     def on_api_command(self, command, data):
-        if command in ['getUPSVars', 'listUPS']:
+        if command == 'getUPSVars':
             try:
                 if not Permissions.STATUS.can():
                     return make_response("Insufficient rights", 403)
             except:
                 if not user_permission.can():
                     return make_response("Insufficient rights", 403)
-
-        if command == 'getUPSVars':
             return jsonify(vars=self.vars)
-        elif command == 'listUPS':
-            try:
-                ups = self.connect(host=str(data['host']), port=int(data['port']),
-                                   auth=data["auth"], username=data["username"], password=data["password"])
-                res = ups.list_ups()
-                return jsonify(result=list(res.keys()))
-            except:
-                # TODO: Can be done diff? idk?
-                return make_response("Error getting UPS list", 500)
+
+        elif command == 'shutdown':
+            success = self.ups.shutdown()
+            return jsonify(result=success)
 
 
     def on_settings_save(self, data):
-        old_config = self.config.copy()
-
-        if ((data.get('host') and data['host'] != old_config['host']) or
-            (data.get('port') and data['host'] != old_config['host']) or
-            (data.get('auth') and data['auth'] != old_config['auth']) or
-            (data.get('username') and data['username'] != old_config['username']) or
-            (data.get('password') and data['password'] != old_config['password']) or
-            (data.get('ups') and data['ups'] != old_config['ups'])):
-            self._logger.info("Connection information changed.")
-            self.ups = None
-
         octoprint.plugin.SettingsPlugin.on_settings_save(self, data)
         self.reload_settings()
 
@@ -276,7 +182,7 @@ class UPS(octoprint.plugin.StartupPlugin,
             "js": ["js/ups.js"],
             "less": ["less/ups.less"],
             "css": ["css/ups.min.css"]
-        } 
+        }
 
 
     def get_update_information(self):
@@ -284,14 +190,10 @@ class UPS(octoprint.plugin.StartupPlugin,
             ups=dict(
                 displayName="UPS",
                 displayVersion=self._plugin_version,
-
-                # version check: github repository
                 type="github_release",
                 user="kantlivelong",
                 repo="OctoPrint-UPS",
                 current=self._plugin_version,
-
-                # update method: pip w/ dependency links
                 pip="https://github.com/kantlivelong/OctoPrint-UPS/archive/{target_version}.zip"
             )
         )
