@@ -2,7 +2,6 @@
 This OctoPrint plugin interfaces with a UPS monitored by [NUT (Network UPS Tools)](https://github.com/networkupstools/nut).  
 
 ## Requirements
- - NUT must be configured by the user. This plugin does not alter NUT configuration whatsoever.
  - A UPS that provides `battery.charge` in percentage.
 
 ## Screenshots
