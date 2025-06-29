@@ -1,32 +1,41 @@
-{% extends "settings.jinja2" %}
-{% block settings %}
-<div class="row">
-  <div class="col-md-6">
-    <div class="form-group">
-      <label for="settings_plugin_ups_ha_url">Endereço do Home Assistant</label>
-      <input type="text" class="form-control" id="settings_plugin_ups_ha_url" data-bind="value: settings.plugins.ups.ha_url">
+<form class="form-horizontal">
+    <h4>Configuração do Home Assistant/ESPHome</h4>
+    <div class="control-group">
+        <label class="control-label">URL do Home Assistant</label>
+        <div class="controls">
+            <input type="text" class="input-block-level" data-bind="value: settings.plugins.ups.ha_url">
+        </div>
     </div>
-    <div class="form-group">
-      <label for="settings_plugin_ups_token">Token de Acesso (Bearer)</label>
-      <input type="text" class="form-control" id="settings_plugin_ups_token" data-bind="value: settings.plugins.ups.token">
+    <div class="control-group">
+        <label class="control-label">API Key do Home Assistant</label>
+        <div class="controls">
+            <input type="text" class="input-block-level" data-bind="value: settings.plugins.ups.ha_token">
+        </div>
     </div>
-    <div class="form-group">
-      <label for="settings_plugin_ups_entity_power">Entidade: UPS na Bateria</label>
-      <input type="text" class="form-control" id="settings_plugin_ups_entity_power" data-bind="value: settings.plugins.ups.entity_power">
+    <div class="control-group">
+        <label class="control-label">Entidade: UPS na Bateria</label>
+        <div class="controls">
+            <input type="text" class="input-block-level" data-bind="value: settings.plugins.ups.entity_power">
+        </div>
     </div>
-    <div class="form-group">
-      <label for="settings_plugin_ups_entity_critical">Entidade: Bateria Crítica</label>
-      <input type="text" class="form-control" id="settings_plugin_ups_entity_critical" data-bind="value: settings.plugins.ups.entity_critical">
+    <div class="control-group">
+        <label class="control-label">Entidade: Bateria Crítica</label>
+        <div class="controls">
+            <input type="text" class="input-block-level" data-bind="value: settings.plugins.ups.entity_critical">
+        </div>
     </div>
-    <div class="form-group">
-      <label for="settings_plugin_ups_entity_shutdown">Entidade: Desligar UPS</label>
-      <input type="text" class="form-control" id="settings_plugin_ups_entity_shutdown" data-bind="value: settings.plugins.ups.entity_shutdown">
+    <div class="control-group">
+        <label class="control-label">Entidade: Desligar UPS</label>
+        <div class="controls">
+            <input type="text" class="input-block-level" data-bind="value: settings.plugins.ups.entity_shutdown">
+        </div>
     </div>
-    <div class="checkbox">
-      <label>
-        <input type="checkbox" data-bind="checked: settings.plugins.ups.pause"> Pausar impressão automaticamente se a bateria estiver crítica
-      </label>
+    <div class="control-group">
+        <div class="controls">
+            <label class="checkbox">
+                <input type="checkbox" data-bind="checked: settings.plugins.ups.pause">
+                Pausar impressão automaticamente se a bateria estiver crítica
+            </label>
+        </div>
     </div>
-  </div>
-</div>
-{% endblock %}
+</form>

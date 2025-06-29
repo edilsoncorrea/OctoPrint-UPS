@@ -38,9 +38,9 @@ class UPS(octoprint.plugin.StartupPlugin,
         return dict(
             ha_url = 'http://homeassistant.local:8123',
             token = '',
-            entity_power = 'binary_sensor.ups_on_battery',
-            entity_critical = 'binary_sensor.ups_battery_critical',
-            entity_shutdown = 'switch.ups_shutdown',
+            entity_power = 'binary_sensor.ups_monitor_c3_01_ups_sem_energia_bateria',
+            entity_critical = 'binary_sensor.ups_monitor_c3_01_ups_bateria_cr_tica',
+            entity_shutdown = 'switch.ups_monitor_c3_01_comando_desligar_ups',
             pause = False
         )
 
