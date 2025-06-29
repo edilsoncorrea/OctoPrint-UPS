@@ -11,6 +11,7 @@ import time
 import threading
 from flask import make_response, jsonify
 import requests
+import os
 
 try:
     from octoprint.access.permissions import Permissions
@@ -144,18 +145,9 @@ class UPS(octoprint.plugin.StartupPlugin,
 
 
     def on_api_command(self, command, data):
-        if command == 'getUPSVars':
-            try:
-                if not Permissions.STATUS.can():
-                    return make_response("Insufficient rights", 403)
-            except:
-                if not user_permission.can():
-                    return make_response("Insufficient rights", 403)
-            return jsonify(vars=self.vars)
-
-        elif command == 'shutdown':
-            success = self.ups.shutdown()
-            return jsonify(result=success)
+        if command == "shutdown_ups":
+            resultado = self.ups.shutdown()
+            return jsonify({"shutdown": resultado})
 
 
     def on_settings_save(self, data):
@@ -217,3 +209,10 @@ def __plugin_load__():
         "octoprint.events.register_custom_events": __plugin_implementation__._hook_events_register_custom_events,
         "octoprint.comm.protocol.scripts": __plugin_implementation__._hook_comm_protocol_scripts
     }
+
+import os
+if os.environ.get("OCTOPRINT_DEBUGPY", "0") == "1":
+    import debugpy
+    debugpy.listen(("0.0.0.0", 5678))
+    print("Aguardando debugger conectar...")
+    debugpy.wait_for_client()
