@@ -9,8 +9,8 @@ plugin_name = "OctoPrint-UPS"
 plugin_version = "0.0.1"
 plugin_description = "Integrates a UPS into OctoPrint"
 plugin_author = "Shawn Bruce"
-plugin_author_email = "kantlivelong@gmail.com"
-plugin_url = "https://github.com/kantlivelong/OctoPrint-UPS"
+plugin_author_email = "edilsoncorrea117@gmail.com"
+plugin_url = "https://github.com/edilsoncorrea/OctoPrint-UPS"
 plugin_license = "AGPLv3"
 plugin_additional_data = []
 

@@ -1,7 +1,7 @@
 # coding=utf-8
 from __future__ import absolute_import
 
-__author__ = "Shawn Bruce <kantlivelong@gmail.com>"
+__author__ = "Edilson Corea <edilsoncorrea117@gmail.com>"
 __license__ = "GNU Affero General Public License http://www.gnu.org/licenses/agpl.html"
 __copyright__ = "Copyright (C) 2021 Shawn Bruce - Released under terms of the AGPLv3 License"
 
@@ -50,6 +50,7 @@ class UPS(octoprint.plugin.StartupPlugin,
 
 
     def on_after_startup(self):
+        self._logger.setLevel("DEBUG")
         self._thread = threading.Thread(target=self._loop)
         self._thread.daemon = True
         self._thread.start()
@@ -191,10 +192,10 @@ class UPS(octoprint.plugin.StartupPlugin,
                 displayName="UPS",
                 displayVersion=self._plugin_version,
                 type="github_release",
-                user="kantlivelong",
+                user="edilsoncorrea",
                 repo="OctoPrint-UPS",
                 current=self._plugin_version,
-                pip="https://github.com/kantlivelong/OctoPrint-UPS/archive/{target_version}.zip"
+                pip="https://github.com/edilsoncorrea/OctoPrint-UPS/archive/refs/heads/esphome.zip"
             )
         )
 
