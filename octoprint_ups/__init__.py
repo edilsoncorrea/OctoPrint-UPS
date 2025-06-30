@@ -42,7 +42,7 @@ class UPS(octoprint.plugin.StartupPlugin,
             entity_power = 'binary_sensor.ups_monitor_c3_01_ups_sem_energia_bateria',
             entity_critical = 'binary_sensor.ups_monitor_c3_01_ups_bateria_cr_tica',
             entity_shutdown = 'switch.ups_monitor_c3_01_comando_desligar_ups',
-            pause = False
+            pause = True
         )
 
 
@@ -131,6 +131,9 @@ class UPS(octoprint.plugin.StartupPlugin,
     def on_event(self, event, payload):
         if event == Events.CLIENT_OPENED:
             self._plugin_manager.send_plugin_message(self._identifier, dict(vars=self.vars))
+        if event == Events.PRINT_PAUSED and self._pause_event.is_set():
+            self._logger.info("Impressão pausada. Enviando comando de shutdown para o UPS.")
+            self.ups.shutdown()
 
 
     def get_api_commands(self):
