@@ -38,7 +38,7 @@ class UPS(octoprint.plugin.StartupPlugin,
     def get_settings_defaults(self):
         return dict(
             ha_url = 'http://homeassistant.local:8123',
-            token = '',
+            ha_token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJkMjU0MjcyNDg2NDg0YzkyODI0MjVlZjg4ZmQ4YmE2ZSIsImlhdCI6MTc1MTE1NDg1NiwiZXhwIjoyMDY2NTE0ODU2fQ.wQyB8O-j__HXpmfKEsoe15ixT7APLp3tYI0HEi0wcbk',
             entity_power = 'binary_sensor.ups_monitor_c3_01_ups_sem_energia_bateria',
             entity_critical = 'binary_sensor.ups_monitor_c3_01_ups_bateria_cr_tica',
             entity_shutdown = 'switch.ups_monitor_c3_01_comando_desligar_ups',
@@ -70,7 +70,7 @@ class UPS(octoprint.plugin.StartupPlugin,
             entity_power=self.config['entity_power'],
             entity_critical=self.config['entity_critical'],
             entity_shutdown=self.config['entity_shutdown'],
-            token=self.config['token']
+            token=self.config['ha_token']
         )
 
 
@@ -135,8 +135,7 @@ class UPS(octoprint.plugin.StartupPlugin,
 
     def get_api_commands(self):
         return dict(
-            getUPSVars=[],
-            shutdown=[]
+            shutdown_ups=[]
         )
 
 
