@@ -18,4 +18,11 @@ $(function() {
             return [UPSViewModel];
         }
     });
+
+    // Substitua 'ups' pelo identificador do seu plugin, se for diferente
+    OctoPrint.socket.onMessage("plugin.ups", function(message) {
+        // Aqui você trata o objeto message.vars
+        console.log("Mensagem do plugin UPS:", message.vars);
+        // Atualize a interface conforme necessário
+    });
 });
