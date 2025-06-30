@@ -14,10 +14,10 @@
       "displayName": "UPS",
       "displayVersion": "1.0.0",
       "type": "github_release",
-      "user": "seu-usuario",
+      "user": "edilsoncorrea",
       "repo": "OctoPrint-UPS-Esphome",
       "current": "1.0.0",
-      "pip": "https://github.com/edilsoncorrea/OctoPrint-UPS/archive/refs/heads/esphome.zip"
+      "pip": "https://github.com/edilsoncorrea/OctoPrint-UPS/archive/{target_version}.zip"
     }
   }
 }

@@ -82,11 +82,48 @@ class UPS(octoprint.plugin.StartupPlugin,
             status = self.ups.get_status()
 
             if not status:
-                self._plugin_manager.send_plugin_message(self._identifier, dict(vars={'ups.status': 'OFFLINE'}))
-                continue
+                # self._plugin_manager.send_plugin_message(self._identifier, dict(
+                #     vars={
+                #         'ups.status': 'OFFLINE',
+                #         'battery.charge': 0,
+                #         'battery.critical': False
+                #     }
+                # ))
 
-            on_battery = status.get('on_battery', False)
-            critical = status.get('critical', False)
+                self.vars = {
+                            'ups.status': 'OFFLINE',
+                            'battery.charge': 0,
+                            'battery.critical': False
+                        }                     
+
+            else:
+                on_battery = status.get('on_battery', False)
+                critical = status.get('critical', False)
+
+                if on_battery:
+                    if critical:
+                        battery_charge = 20
+                    else:
+                        battery_charge = 100
+                    ups_status = 'OB'
+                else:
+                    battery_charge = 100
+                    ups_status = 'OL'
+
+                # self._plugin_manager.send_plugin_message(self._identifier, dict(
+                #     vars={
+                #         'ups.status': ups_status,
+                #         'battery.charge': battery_charge,
+                #         'battery.critical': critical
+                #     }
+                # ))
+
+
+                self.vars = {
+                            'ups.status': ups_status,
+                            'battery.charge': battery_charge,
+                            'battery.critical': critical
+                        }                     
 
             if on_battery and not prev_status.get('on_battery', False):
                 self._logger.info("Power lost. Running on battery.")
@@ -104,10 +141,10 @@ class UPS(octoprint.plugin.StartupPlugin,
                     self._pause_event.set()
                     self._printer.pause_print(tag={"source:plugin", "plugin:ups"})
 
-            self.vars = {
-                'ups.status': 'OB' if on_battery else 'OL',
-                'battery.critical': critical
-            }
+            # self.vars = {
+            #     'ups.status': 'OB' if on_battery else 'OL',
+            #     'battery.critical': critical
+            # }
 
             self._plugin_manager.send_plugin_message(self._identifier, dict(vars=self.vars))
             prev_status = status
@@ -189,7 +226,7 @@ class UPS(octoprint.plugin.StartupPlugin,
                 user="edilsoncorrea",
                 repo="OctoPrint-UPS",
                 current=self._plugin_version,
-                pip="https://github.com/edilsoncorrea/OctoPrint-UPS/archive/refs/heads/esphome.zip"
+                pip="https://github.com/edilsoncorrea/OctoPrint-UPS/archive/{target_version}.zip"
             )
         )
 
