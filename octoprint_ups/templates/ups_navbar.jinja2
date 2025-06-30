@@ -1,6 +1,11 @@
-<a id="ups_battery" class="pull-right" title="UPS Status" href="javascript:void(0)" data-bind="popover: {placement: 'bottom', trigger: 'hover', html: true, title: 'UPS Status', content: popoverContent()}" style="position: relative;">
-    <i class="fa fa-battery-empty fa-battery-filling">
-        <span id="ups_battery_bar"></span>
+<a id="ups_battery" class="pull-right" title="UPS Status" href="javascript:void(0)">
+    <i class="fa fa-battery-empty" id="ups_battery_icon" style="font-size: 20px; color: #007bff;">
+        <span id="ups_battery_bar"
+              style="display: inline-block; width: 30px; height: 8px; background: #e0e0e0; border-radius: 2px; vertical-align: middle; margin-left: 5px;">
+            <span id="ups_battery_fill"
+                  style="display: inline-block; height: 100%; width: 0%; background: #007bff; border-radius: 2px;"></span>
+        </span>
     </i>
-    <i id="ups_battery_status" class="fa fa-stack-1x" style="font-size:0.75em; left: 15px; top: 0px;"></i>
+    <span id="ups_battery_status" style="margin-left: 8px; font-weight: bold;">--</span>
+    <span id="ups_battery_critical" style="margin-left: 8px; font-weight: bold; color: red; display: none;">Crítico!</span>
 </a>
