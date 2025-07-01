@@ -31,8 +31,11 @@ class UPS(octoprint.plugin.StartupPlugin,
         self.config = dict()
         self.ups = None
         self.vars = dict()
-
+        
         self._pause_event = threading.Event()
+        # Adicione estas variáveis para armazenar as temperaturas
+        self._saved_extruder_temp = 0
+        self._saved_bed_temp = 0
 
 
     def get_settings_defaults(self):
@@ -137,15 +140,49 @@ class UPS(octoprint.plugin.StartupPlugin,
         if not script_type == "gcode":
             return None
 
-        if script_name in ['afterPrintPaused', 'beforePrintResumed']:
-            d = dict(initiated_pause=self._pause_event.is_set())
-        else:
-            return None
+        if script_name == 'afterPrintPaused':
+            self._saved_extruder_temp = self._printer.get_current_temperatures().get('tool0', {}).get('target', 0)
+            self._saved_bed_temp = self._printer.get_current_temperatures().get('bed', {}).get('target', 0)
 
-        if script_name == "beforePrintResumed":
+            # Salva as temperaturas atuais quando a impressão é pausada
+            if self._pause_event.is_set():
+                self._saved_extruder_temp = self._printer.get_current_temperatures().get('tool0', {}).get('target', 0)
+                self._saved_bed_temp = self._printer.get_current_temperatures().get('bed', {}).get('target', 0)
+            
+                self._logger.info(f"Temperaturas salvas - Extrusor: {self._saved_extruder_temp}°C, Cama: {self._saved_bed_temp}°C")
+            
+            return (None, None, dict(initiated_pause=self._pause_event.is_set()))
+        
+        elif script_name == 'beforePrintResumed':
+            # Reestabelece as temperaturas antes de retomar
+            #if self._pause_event.is_set():
+            gcode_commands = []
+            
+            # Reestabelece temperatura do extrusor se foi salva
+            if self._saved_extruder_temp > 0:
+                gcode_commands.append(f"M104 S{self._saved_extruder_temp}")  # Aquece extrusor
+                
+            # Reestabelece temperatura da cama se foi salva
+            if self._saved_bed_temp > 0:
+                gcode_commands.append(f"M140 S{self._saved_bed_temp}")  # Aquece cama
+
+            if self._saved_extruder_temp > 0:
+                gcode_commands.append(f"M109 S{self._saved_extruder_temp}")  # Espera atingir temperatura
+
+            if self._saved_bed_temp > 0:
+                gcode_commands.append(f"M190 S{self._saved_bed_temp}")  # Espera atingir temperatura
+            
+            self._logger.info(f"Reestabelecendo temperaturas - Extrusor: {self._saved_extruder_temp}°C, Cama: {self._saved_bed_temp}°C")
+            
+            # Limpa o evento de pausa
             self._pause_event.clear()
-
-        return (None, None, d)
+            
+            # Retorna os comandos G-code para serem executados
+            return (gcode_commands, None, dict(initiated_pause=True))
+            #else:
+            #    return (None, None, dict(initiated_pause=False))
+        
+        return None
 
 
     def on_event(self, event, payload):
