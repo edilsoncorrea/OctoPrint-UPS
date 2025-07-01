@@ -38,7 +38,7 @@ class UPS(octoprint.plugin.StartupPlugin,
     def get_settings_defaults(self):
         return dict(
             ha_url = 'http://homeassistant.local:8123',
-            ha_token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJkMjU0MjcyNDg2NDg0YzkyODI0MjVlZjg4ZmQ4YmE2ZSIsImlhdCI6MTc1MTE1NDg1NiwiZXhwIjoyMDY2NTE0ODU2fQ.wQyB8O-j__HXpmfKEsoe15ixT7APLp3tYI0HEi0wcbk',
+            ha_token = '', # ha_token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJkMjU0MjcyNDg2NDg0YzkyODI0MjVlZjg4ZmQ4YmE2ZSIsImlhdCI6MTc1MTE1NDg1NiwiZXhwIjoyMDY2NTE0ODU2fQ.wQyB8O-j__HXpmfKEsoe15ixT7APLp3tYI0HEi0wcbk',
             entity_power = 'binary_sensor.ups_monitor_c3_01_ups_sem_energia_bateria',
             entity_critical = 'binary_sensor.ups_monitor_c3_01_ups_bateria_cr_tica',
             entity_shutdown = 'switch.ups_monitor_c3_01_comando_desligar_ups',
@@ -85,6 +85,7 @@ class UPS(octoprint.plugin.StartupPlugin,
                 self.vars = {
                             'ups.status': 'OFFLINE',
                             'battery.charge': 0,
+                            'battery.runtime': 3600,
                             'battery.critical': False
                         }                     
 
@@ -95,16 +96,20 @@ class UPS(octoprint.plugin.StartupPlugin,
                 if on_battery:
                     if critical:
                         battery_charge = 20
+                        battery_runtime = 120
                     else:
-                        battery_charge = 100
+                        battery_charge = 80
+                        battery_runtime = 420
                     ups_status = 'OB'
                 else:
                     battery_charge = 100
+                    battery_runtime = 3600
                     ups_status = 'OL'
 
                 self.vars = {
                             'ups.status': ups_status,
                             'battery.charge': battery_charge,
+                            'battery.runtime': battery_runtime,
                             'battery.critical': critical
                         }                     
 

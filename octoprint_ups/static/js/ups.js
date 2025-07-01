@@ -30,13 +30,15 @@ $(function() {
 
         self.updateBatteryBar = function(percent) {
             var color = "";
+            var battery_high = 80; // valor fixo
+            var battery_low = 30;  // valor fixo
 
             self.ups_battery_bar.css("width", "calc(" + percent + "% * 0.73)");
-            if (percent >= self.settings.plugins.ups.battery_high()) {
+            if (percent >= battery_high) {
                 color = "green";
-            } else if (percent > self.settings.plugins.ups.battery_low() && percent < self.settings.plugins.ups.battery_high()) {
+            } else if (percent > battery_low && percent < battery_high) {
                 color = "orange";
-            } else if (percent <= self.settings.plugins.ups.battery_low()) {
+            } else if (percent <= battery_low) {
                 color = "red";
             }
 

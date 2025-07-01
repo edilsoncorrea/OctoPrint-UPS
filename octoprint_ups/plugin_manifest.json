@@ -15,7 +15,7 @@
       "displayVersion": "1.0.0",
       "type": "github_release",
       "user": "edilsoncorrea",
-      "repo": "OctoPrint-UPS-Esphome",
+      "repo": "OctoPrint-UPS",
       "current": "1.0.0",
       "pip": "https://github.com/edilsoncorrea/OctoPrint-UPS/archive/{target_version}.zip"
     }
