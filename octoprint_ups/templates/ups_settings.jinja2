@@ -48,6 +48,24 @@
         </div>
     </div>
     <div class="control-group">
+        <div class="controls">
+            <label class="checkbox">
+                <input type="checkbox" data-bind="checked: settings.plugins.ups.save_print_state">
+                Salvar estado da impressão antes do shutdown do UPS
+            </label>
+            <span class="help-block">Salva informações da impressão para permitir recuperação após o shutdown</span>
+        </div>
+    </div>
+    <div class="control-group">
+        <div class="controls">
+            <label class="checkbox">
+                <input type="checkbox" data-bind="checked: settings.plugins.ups.auto_recover_after_shutdown">
+                Oferecer recuperação automática após reconexão
+            </label>
+            <span class="help-block">Oferece automaticamente recuperar a impressão quando a impressora reconectar após um shutdown</span>
+        </div>
+    </div>
+    <div class="control-group">
         <label class="control-label">Temperatura limite para desligar UPS (°C)</label>
         <div class="controls">
             <input type="number" min="0" max="300" step="1" class="input-small" data-bind="value: settings.plugins.ups.shutdown_temp_threshold">

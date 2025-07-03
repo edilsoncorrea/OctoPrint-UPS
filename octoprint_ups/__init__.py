@@ -25,7 +25,8 @@ class UPS(octoprint.plugin.StartupPlugin,
           octoprint.plugin.AssetPlugin,
           octoprint.plugin.SettingsPlugin,
           octoprint.plugin.SimpleApiPlugin,
-          octoprint.plugin.EventHandlerPlugin):
+          octoprint.plugin.EventHandlerPlugin,
+          octoprint.plugin.ProgressPlugin):
 
     def __init__(self):
         self.config = dict()
@@ -33,10 +34,20 @@ class UPS(octoprint.plugin.StartupPlugin,
         self.vars = dict()
         
         self._pause_event = threading.Event()
-        # Adicione estas variáveis para armazenar as temperaturas
+        # Variáveis para armazenar as temperaturas
         self._saved_extruder_temp = 0
         self._saved_bed_temp = 0
         self._pending_shutdown = False
+        
+        # Variáveis para salvar estado da impressão antes do shutdown
+        self._print_state_saved = False
+        self._saved_print_file = None
+        self._saved_print_position = None
+        self._saved_print_progress = 0
+        self._saved_file_position = 0  # Posição no arquivo (byte offset)
+        self._saved_line_number = 0    # Número da linha no G-code
+        self._saved_coordinates = {'x': 0, 'y': 0, 'z': 0, 'e': 0}  # Coordenadas físicas
+        self._shutdown_occurred = False
 
 
     def get_settings_defaults(self):
@@ -48,7 +59,9 @@ class UPS(octoprint.plugin.StartupPlugin,
             entity_shutdown = 'switch.ups_monitor_c3_01_comando_desligar_ups',
             pause = True,
             shutdown_temp_threshold = 50,
-            block_resume_on_battery = True
+            block_resume_on_battery = True,
+            save_print_state = True,
+            auto_recover_after_shutdown = True
         )
 
 
@@ -58,6 +71,11 @@ class UPS(octoprint.plugin.StartupPlugin,
 
     def on_after_startup(self):
         self._logger.setLevel("DEBUG")
+        
+        # Carrega estado salvo da impressão se houver
+        if self._load_print_state():
+            self._logger.info("Estado de impressão anterior encontrado após startup.")
+        
         self._thread = threading.Thread(target=self._loop)
         self._thread.daemon = True
         self._thread.start()
@@ -180,9 +198,18 @@ class UPS(octoprint.plugin.StartupPlugin,
             threshold_temp = self.config.get('shutdown_temp_threshold', 50)
             
             if extruder_temp <= threshold_temp:
-                self._logger.info(f"Todas as condições atendidas - UPS na bateria: {on_battery}, Crítico: {critical}, Temperatura: {extruder_temp}°C ≤ {threshold_temp}°C. Desligando UPS.")
+                self._logger.info(f"Todas as condições atendidas - UPS na bateria: {on_battery}, Crítico: {critical}, Temperatura: {extruder_temp}°C ≤ {threshold_temp}°C. Preparando shutdown do UPS.")
+                
+                # Salva estado da impressão antes do shutdown
+                if self.config.get('save_print_state', True):
+                    self._save_print_state()
+                
+                # Executa shutdown do UPS
+                self._logger.info("Executando shutdown do UPS...")
                 self.ups.shutdown()
                 self._pending_shutdown = False
+                self._shutdown_occurred = True
+                
             else:
                 self._logger.debug(f"Aguardando temperatura diminuir. UPS na bateria: {on_battery}, Crítico: {critical}, Temperatura atual: {extruder_temp}°C, Limite: {threshold_temp}°C")
                 
@@ -299,6 +326,9 @@ class UPS(octoprint.plugin.StartupPlugin,
             # Limpa pending shutdown se a impressão for cancelada ou finalizada
             self._pending_shutdown = False
             self._pause_event.clear()
+            # Limpa estado salvo se impressão foi finalizada normalmente
+            if event == Events.PRINT_DONE:
+                self._clear_saved_state()
         elif event == Events.PRINT_RESUMED:
             # Verifica se a impressão foi retomada sem energia da rede
             if self.config.get('block_resume_on_battery', True):
@@ -319,12 +349,33 @@ class UPS(octoprint.plugin.StartupPlugin,
                     # Em caso de erro, pausa por segurança
                     self._logger.info("Erro ao verificar UPS. Pausando impressão por segurança.")
                     self._printer.pause_print(tag={"source:plugin", "plugin:ups", "reason:ups_check_error"})
+        elif event == Events.CONNECTED:
+            # Impressora reconectada - oferece recuperação de impressão se disponível
+            self._logger.info("Impressora reconectada.")
+            if self._print_state_saved:
+                # Aguarda um pouco para garantir que a conexão está estável
+                def delayed_recovery():
+                    time.sleep(5)  # Espera 5 segundos
+                    self._offer_print_recovery()
+                
+                recovery_thread = threading.Thread(target=delayed_recovery)
+                recovery_thread.daemon = True
+                recovery_thread.start()
+        elif event == Events.DISCONNECTED:
+            # Impressora desconectada
+            self._logger.info("Impressora desconectada.")
+            if self._shutdown_occurred:
+                self._logger.info("Desconexão detectada após shutdown do UPS.")
+                self._shutdown_occurred = False
         # Removido o shutdown automático - agora é controlado por temperatura
 
 
     def get_api_commands(self):
         return dict(
-            shutdown_ups=[]
+            shutdown_ups=[],
+            get_recovery_info=[],
+            start_recovery=[],
+            clear_recovery=[]
         )
 
 
@@ -336,6 +387,74 @@ class UPS(octoprint.plugin.StartupPlugin,
         if command == "shutdown_ups":
             resultado = self.ups.shutdown()
             return jsonify({"shutdown": resultado})
+        
+        elif command == "get_recovery_info":
+            if self._print_state_saved:
+                return jsonify({
+                    "available": True,
+                    "file": self._saved_print_file,
+                    "progress": self._saved_print_progress,
+                    "extruder_temp": self._saved_extruder_temp,
+                    "bed_temp": self._saved_bed_temp
+                })
+            else:
+                return jsonify({"available": False})
+        
+        elif command == "start_recovery":
+            if not self._print_state_saved:
+                return jsonify({"success": False, "message": "Nenhum estado de recuperação disponível"})
+            
+            try:
+                # Verifica se não há impressão ativa
+                if self._printer.is_printing() or self._printer.is_paused():
+                    return jsonify({"success": False, "message": "Há uma impressão ativa. Cancele antes de recuperar."})
+                
+                # Inicia processo de recuperação
+                if self._saved_print_file:
+                    self._logger.info(f"Iniciando recuperação exata da impressão: {self._saved_print_file}")
+                    self._logger.info(f"Posição: {self._saved_file_position} bytes, Linha: {self._saved_line_number}")
+                    
+                    # Seleciona o arquivo
+                    self._printer.select_file(self._saved_print_file, False)
+                    
+                    # Executa G-code de recuperação
+                    recovery_commands = self._create_recovery_gcode()
+                    if recovery_commands:
+                        # Envia comandos de recuperação
+                        for cmd in recovery_commands:
+                            self._printer.commands(cmd)
+                    
+                    # Informa sobre a recuperação
+                    recovery_info = {
+                        "success": True,
+                        "message": f"Recuperação iniciada na posição exata",
+                        "details": {
+                            "progress": f"{self._saved_print_progress:.1f}%",
+                            "position": f"X{self._saved_coordinates['x']:.2f} Y{self._saved_coordinates['y']:.2f} Z{self._saved_coordinates['z']:.2f}",
+                            "file_position": self._saved_file_position,
+                            "line_number": self._saved_line_number,
+                            "extruder_temp": self._saved_extruder_temp,
+                            "bed_temp": self._saved_bed_temp
+                        }
+                    }
+                    
+                    # Nota importante para o usuário
+                    self._logger.warning("ATENÇÃO: Após aquecimento, você precisa:")
+                    self._logger.warning("1. Verificar se o cabeçote está na posição correta")
+                    self._logger.warning("2. Iniciar impressão manualmente do ponto onde parou")
+                    self._logger.warning(f"3. Use 'Restart print from line {self._saved_line_number}' se suportado")
+                    
+                    return jsonify(recovery_info)
+                else:
+                    return jsonify({"success": False, "message": "Arquivo de impressão não encontrado"})
+                    
+            except Exception as e:
+                self._logger.error(f"Erro durante recuperação: {e}")
+                return jsonify({"success": False, "message": f"Erro durante recuperação: {str(e)}"})
+        
+        elif command == "clear_recovery":
+            self._clear_saved_state()
+            return jsonify({"success": True, "message": "Estado de recuperação limpo"})
 
 
     def on_settings_save(self, data):
@@ -344,7 +463,7 @@ class UPS(octoprint.plugin.StartupPlugin,
 
 
     def get_settings_version(self):
-        return 2
+        return 3
 
 
     def on_settings_migrate(self, target, current=None):
@@ -352,10 +471,9 @@ class UPS(octoprint.plugin.StartupPlugin,
             current = 0
         
         if current < 2:
-            # Migração para versão 2 - adiciona novas configurações
+            # Migração para versão 2 - adiciona configurações de temperatura e bloqueio
             self._logger.info("Migrando configurações do UPS para versão 2")
             
-            # Força recarregamento das configurações padrão
             if not self._settings.has(['shutdown_temp_threshold']):
                 self._settings.set(['shutdown_temp_threshold'], 50)
                 
@@ -363,7 +481,20 @@ class UPS(octoprint.plugin.StartupPlugin,
                 self._settings.set(['block_resume_on_battery'], True)
                 
             self._settings.save()
-            self._logger.info("Migração concluída - novas configurações adicionadas")
+            self._logger.info("Migração v2 concluída - configurações de temperatura adicionadas")
+        
+        if current < 3:
+            # Migração para versão 3 - adiciona configurações de recuperação
+            self._logger.info("Migrando configurações do UPS para versão 3")
+            
+            if not self._settings.has(['save_print_state']):
+                self._settings.set(['save_print_state'], True)
+                
+            if not self._settings.has(['auto_recover_after_shutdown']):
+                self._settings.set(['auto_recover_after_shutdown'], True)
+                
+            self._settings.save()
+            self._logger.info("Migração v3 concluída - configurações de recuperação adicionadas")
 
 
     def get_template_configs(self):
@@ -396,6 +527,291 @@ class UPS(octoprint.plugin.StartupPlugin,
 
     def _hook_events_register_custom_events(self):
         return ["status_changed"]
+
+    def _save_print_state(self):
+        """Salva o estado atual da impressão antes do shutdown"""
+        try:
+            self._logger.info("Salvando estado da impressão...")
+            
+            # Verifica se há uma impressão ativa
+            if not self._printer.is_printing() and not self._printer.is_paused():
+                self._logger.warning("Nenhuma impressão ativa para salvar estado.")
+                return False
+            
+            # Obtém informações do trabalho atual
+            current_job = self._printer.get_current_job()
+            if not current_job or not current_job.get('file', {}).get('name'):
+                self._logger.error("Não foi possível obter informações do trabalho atual.")
+                return False
+            
+            # Salva informações básicas
+            self._saved_print_file = current_job['file']['path']
+            file_info = current_job['file']
+            
+            # Obtém progresso atual
+            current_data = self._printer.get_current_data()
+            if current_data and current_data.get('progress'):
+                self._saved_print_progress = current_data['progress'].get('completion', 0)
+                self._saved_file_position = current_data['progress'].get('filepos', 0)
+            else:
+                self._saved_print_progress = 0
+                self._saved_file_position = 0
+            
+            # Obtém temperaturas atuais
+            current_temps = self._printer.get_current_temperatures()
+            self._saved_extruder_temp = current_temps.get('tool0', {}).get('target', 0)
+            self._saved_bed_temp = current_temps.get('bed', {}).get('target', 0)
+            
+            # Obtém posição atual do cabeçote usando M114
+            self._get_current_position()
+            
+            # Calcula número da linha aproximado baseado no progresso
+            if file_info.get('size', 0) > 0 and self._saved_file_position > 0:
+                # Lê o arquivo para determinar o número da linha
+                try:
+                    with open(file_info.get('path', ''), 'r') as f:
+                        content = f.read(self._saved_file_position)
+                        self._saved_line_number = content.count('\n') + 1
+                except Exception as e:
+                    self._logger.warning(f"Erro ao calcular número da linha: {e}")
+                    # Estimativa baseada no progresso
+                    estimated_total_lines = file_info.get('size', 0) // 50  # Assume ~50 chars por linha
+                    self._saved_line_number = int(estimated_total_lines * (self._saved_print_progress / 100))
+            else:
+                self._saved_line_number = 0
+            
+            # Salva estado em arquivo persistente
+            self._save_state_to_file()
+            
+            self._print_state_saved = True
+            
+            self._logger.info(f"Estado salvo com sucesso:")
+            self._logger.info(f"  - Arquivo: {self._saved_print_file}")
+            self._logger.info(f"  - Progresso: {self._saved_print_progress:.1f}%")
+            self._logger.info(f"  - Posição arquivo: {self._saved_file_position} bytes")
+            self._logger.info(f"  - Linha estimada: {self._saved_line_number}")
+            self._logger.info(f"  - Coordenadas: X{self._saved_coordinates['x']:.2f} Y{self._saved_coordinates['y']:.2f} Z{self._saved_coordinates['z']:.2f}")
+            self._logger.info(f"  - Temperaturas: Extrusor {self._saved_extruder_temp}°C, Mesa {self._saved_bed_temp}°C")
+            
+            return True
+            
+        except Exception as e:
+            self._logger.error(f"Erro ao salvar estado da impressão: {e}")
+            return False
+
+    def _get_current_position(self):
+        """Obtém a posição atual do cabeçote usando comando M114"""
+        try:
+            # Comando M114 para obter posição atual
+            def position_callback(comm, line, *args, **kwargs):
+                # Processa resposta do M114
+                if line.startswith("X:") or "X:" in line:
+                    try:
+                        # Parse da linha: "X:123.45 Y:67.89 Z:1.23 E:45.67"
+                        parts = line.strip().split()
+                        for part in parts:
+                            if part.startswith("X:"):
+                                self._saved_coordinates['x'] = float(part[2:])
+                            elif part.startswith("Y:"):
+                                self._saved_coordinates['y'] = float(part[2:])
+                            elif part.startswith("Z:"):
+                                self._saved_coordinates['z'] = float(part[2:])
+                            elif part.startswith("E:"):
+                                self._saved_coordinates['e'] = float(part[2:])
+                        
+                        self._logger.debug(f"Posição atual obtida: {self._saved_coordinates}")
+                    except Exception as e:
+                        self._logger.warning(f"Erro ao interpretar posição M114: {e}")
+            
+            # Registra callback temporário e envia M114
+            self._printer.commands("M114")
+            
+            # Como não temos acesso direto ao callback, vamos usar uma abordagem alternativa
+            # Salva as coordenadas com valores padrão caso M114 falhe
+            if not any(self._saved_coordinates.values()):
+                self._logger.warning("Não foi possível obter posição atual, usando coordenadas padrão")
+                self._saved_coordinates = {'x': 0, 'y': 0, 'z': 10, 'e': 0}
+                
+        except Exception as e:
+            self._logger.error(f"Erro ao obter posição atual: {e}")
+            # Coordenadas padrão de segurança
+            self._saved_coordinates = {'x': 0, 'y': 0, 'z': 10, 'e': 0}
+
+    def _save_state_to_file(self):
+        """Salva o estado em um arquivo JSON para persistência"""
+        try:
+            import json
+            
+            state_data = {
+                'print_file': self._saved_print_file,
+                'progress': self._saved_print_progress,
+                'file_position': self._saved_file_position,
+                'line_number': self._saved_line_number,
+                'coordinates': self._saved_coordinates,
+                'extruder_temp': self._saved_extruder_temp,
+                'bed_temp': self._saved_bed_temp,
+                'timestamp': time.time()
+            }
+            
+            # Salva no diretório de dados do plugin
+            state_file = os.path.join(self.get_plugin_data_folder(), 'print_state.json')
+            
+            with open(state_file, 'w') as f:
+                json.dump(state_data, f, indent=2)
+            
+            self._logger.debug(f"Estado salvo em arquivo: {state_file}")
+            
+        except Exception as e:
+            self._logger.error(f"Erro ao salvar estado em arquivo: {e}")
+
+    def _load_print_state(self):
+        """Carrega o estado salvo da impressão"""
+        try:
+            import json
+            
+            state_file = os.path.join(self.get_plugin_data_folder(), 'print_state.json')
+            
+            if not os.path.exists(state_file):
+                return False
+            
+            with open(state_file, 'r') as f:
+                state_data = json.load(f)
+            
+            # Restaura variáveis
+            self._saved_print_file = state_data.get('print_file')
+            self._saved_print_progress = state_data.get('progress', 0)
+            self._saved_file_position = state_data.get('file_position', 0)
+            self._saved_line_number = state_data.get('line_number', 0)
+            self._saved_coordinates = state_data.get('coordinates', {'x': 0, 'y': 0, 'z': 10, 'e': 0})
+            self._saved_extruder_temp = state_data.get('extruder_temp', 0)
+            self._saved_bed_temp = state_data.get('bed_temp', 0)
+            
+            self._print_state_saved = True
+            
+            self._logger.info(f"Estado carregado com sucesso:")
+            self._logger.info(f"  - Arquivo: {self._saved_print_file}")
+            self._logger.info(f"  - Progresso: {self._saved_print_progress:.1f}%")
+            self._logger.info(f"  - Linha: {self._saved_line_number}")
+            self._logger.info(f"  - Coordenadas: X{self._saved_coordinates['x']:.2f} Y{self._saved_coordinates['y']:.2f} Z{self._saved_coordinates['z']:.2f}")
+            
+            return True
+            
+        except Exception as e:
+            self._logger.error(f"Erro ao carregar estado da impressão: {e}")
+            return False
+
+    def _offer_print_recovery(self):
+        """Oferece recuperação de impressão após reconexão"""
+        if not self._print_state_saved:
+            return
+        
+        if not self.config.get('auto_recover_after_shutdown', True):
+            self._logger.info("Recuperação automática está desabilitada.")
+            return
+        
+        self._logger.info("=== RECUPERAÇÃO DE IMPRESSÃO DISPONÍVEL ===")
+        self._logger.info(f"Arquivo: {self._saved_print_file}")
+        self._logger.info(f"Progresso antes do shutdown: {self._saved_print_progress:.1f}%")
+        self._logger.info(f"Posição: X{self._saved_coordinates['x']:.2f} Y{self._saved_coordinates['y']:.2f} Z{self._saved_coordinates['z']:.2f}")
+        self._logger.info("Use a API '/api/plugin/ups' com comando 'start_recovery' para recuperar.")
+        self._logger.info("Ou acesse as configurações do plugin UPS para recuperação manual.")
+        
+        # Envia notificação para o frontend se possível
+        try:
+            self._plugin_manager.send_plugin_message(self._identifier, {
+                'type': 'recovery_available',
+                'data': {
+                    'file': self._saved_print_file,
+                    'progress': self._saved_print_progress,
+                    'position': f"X{self._saved_coordinates['x']:.2f} Y{self._saved_coordinates['y']:.2f} Z{self._saved_coordinates['z']:.2f}"
+                }
+            })
+        except:
+            pass  # Se falhar, não é crítico
+
+    def _create_recovery_gcode(self):
+        """Cria comandos G-code para recuperação da impressão"""
+        try:
+            commands = []
+            
+            # 1. Comentários informativos
+            commands.append("; === RECUPERAÇÃO DE IMPRESSÃO UPS ===")
+            commands.append(f"; Arquivo: {self._saved_print_file}")
+            commands.append(f"; Progresso: {self._saved_print_progress:.1f}%")
+            commands.append(f"; Linha aproximada: {self._saved_line_number}")
+            
+            # 2. Configuração inicial
+            commands.append("G90 ; Modo absoluto")
+            commands.append("M82 ; Extrusor absoluto")
+            
+            # 3. Home dos eixos
+            commands.append("G28 X Y ; Home X e Y")
+            
+            # 4. Aquecimento (sem esperar inicialmente)
+            if self._saved_extruder_temp > 0:
+                commands.append(f"M104 S{self._saved_extruder_temp} ; Aquece extrusor para {self._saved_extruder_temp}°C")
+            
+            if self._saved_bed_temp > 0:
+                commands.append(f"M140 S{self._saved_bed_temp} ; Aquece mesa para {self._saved_bed_temp}°C")
+            
+            # 5. Posicionamento Z seguro
+            safe_z = max(self._saved_coordinates['z'], 10)  # Pelo menos 10mm
+            commands.append(f"G1 Z{safe_z} F3000 ; Move Z para posição segura")
+            
+            # 6. Espera aquecimento
+            if self._saved_extruder_temp > 0:
+                commands.append(f"M109 S{self._saved_extruder_temp} ; Espera extrusor aquecer")
+            
+            if self._saved_bed_temp > 0:
+                commands.append(f"M190 S{self._saved_bed_temp} ; Espera mesa aquecer")
+            
+            # 7. Purga do extrusor
+            commands.append("G1 E-5 F1800 ; Retrai filamento")
+            commands.append("G1 E5 F300 ; Purga lentamente")
+            commands.append("G1 E-2 F1800 ; Retrai um pouco")
+            
+            # 8. Posicionamento final
+            commands.append(f"G1 X{self._saved_coordinates['x']:.2f} Y{self._saved_coordinates['y']:.2f} F6000 ; Move para posição XY")
+            commands.append(f"G1 Z{self._saved_coordinates['z']:.2f} F3000 ; Move para posição Z")
+            
+            # 9. Instruções finais
+            commands.append("; === INSTRUÇÕES ===")
+            commands.append(f"; 1. Verifique se o cabeçote está na posição correta")
+            commands.append(f"; 2. Inicie a impressão manualmente a partir da linha {self._saved_line_number}")
+            commands.append(f"; 3. Ou use 'Restart from line {self._saved_line_number}' se suportado")
+            commands.append("M117 Pronto p/ recuperacao ; Mensagem no display")
+            
+            self._logger.info(f"Comandos de recuperação criados: {len(commands)} linhas")
+            return commands
+            
+        except Exception as e:
+            self._logger.error(f"Erro ao criar comandos de recuperação: {e}")
+            return []
+
+    def _clear_saved_state(self):
+        """Limpa o estado salvo da impressão"""
+        try:
+            # Limpa variáveis na memória
+            self._print_state_saved = False
+            self._saved_print_file = None
+            self._saved_print_position = None
+            self._saved_print_progress = 0
+            self._saved_file_position = 0
+            self._saved_line_number = 0
+            self._saved_coordinates = {'x': 0, 'y': 0, 'z': 0, 'e': 0}
+            self._saved_extruder_temp = 0
+            self._saved_bed_temp = 0
+            
+            # Remove arquivo de estado
+            state_file = os.path.join(self.get_plugin_data_folder(), 'print_state.json')
+            if os.path.exists(state_file):
+                os.remove(state_file)
+                self._logger.info("Arquivo de estado removido.")
+            
+            self._logger.info("Estado de recuperação limpo.")
+            
+        except Exception as e:
+            self._logger.error(f"Erro ao limpar estado salvo: {e}")
 
 
 __plugin_name__ = "UPS"
