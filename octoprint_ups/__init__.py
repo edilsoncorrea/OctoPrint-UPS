@@ -36,6 +36,7 @@ class UPS(octoprint.plugin.StartupPlugin,
         # Adicione estas variáveis para armazenar as temperaturas
         self._saved_extruder_temp = 0
         self._saved_bed_temp = 0
+        self._pending_shutdown = False
 
 
     def get_settings_defaults(self):
@@ -45,7 +46,9 @@ class UPS(octoprint.plugin.StartupPlugin,
             entity_power = 'binary_sensor.ups_monitor_c3_01_ups_sem_energia_bateria',
             entity_critical = 'binary_sensor.ups_monitor_c3_01_ups_bateria_cr_tica',
             entity_shutdown = 'switch.ups_monitor_c3_01_comando_desligar_ups',
-            pause = True
+            pause = True,
+            shutdown_temp_threshold = 50,
+            block_resume_on_battery = True
         )
 
 
@@ -66,6 +69,8 @@ class UPS(octoprint.plugin.StartupPlugin,
                 v = self._settings.get([k])
             elif isinstance(v, bool):
                 v = self._settings.get_boolean([k])
+            elif isinstance(v, int):
+                v = self._settings.get_int([k])
             self.config[k] = v
 
         self.ups = EsphomeUPSClient(
@@ -83,6 +88,10 @@ class UPS(octoprint.plugin.StartupPlugin,
         while True:
             time.sleep(1)
             status = self.ups.get_status()
+
+            # Inicializa as variáveis padrão
+            on_battery = False
+            critical = False
 
             if not status:
                 self.vars = {
@@ -121,6 +130,10 @@ class UPS(octoprint.plugin.StartupPlugin,
 
             if not on_battery and prev_status.get('on_battery', False):
                 self._logger.info("Power restored.")
+                # Cancela shutdown pendente se a energia foi restaurada
+                if self._pending_shutdown:
+                    self._logger.info("Energia restaurada. Cancelando shutdown pendente do UPS.")
+                    self._pending_shutdown = False
 
             if on_battery and critical:
                 self._logger.info("Battery critical.")
@@ -130,10 +143,62 @@ class UPS(octoprint.plugin.StartupPlugin,
 
                     self._logger.info("Battery critical. Pausing job.")
                     self._pause_event.set()
+                    self._pending_shutdown = True
                     self._printer.pause_print(tag={"source:plugin", "plugin:ups"})
+
+            # Verifica se devemos desligar o UPS após pausar
+            if self._pending_shutdown and self._printer.is_paused():
+                self._check_and_shutdown_ups()
 
             self._plugin_manager.send_plugin_message(self._identifier, dict(vars=self.vars))
             prev_status = status
+
+
+    def _check_and_shutdown_ups(self):
+        """Verifica se as condições para desligar o UPS foram atendidas"""
+        try:
+            # Verifica o status atual do UPS
+            ups_status = self.ups.get_status()
+            if not ups_status:
+                self._logger.warning("Não foi possível obter status do UPS. Cancelando shutdown.")
+                self._pending_shutdown = False
+                return
+            
+            on_battery = ups_status.get('on_battery', False)
+            critical = ups_status.get('critical', False)
+            
+            # Verifica se o UPS ainda está na bateria e em condição crítica
+            if not (on_battery and critical):
+                self._logger.info("UPS não está mais na bateria ou não está mais em condição crítica. Cancelando shutdown.")
+                self._pending_shutdown = False
+                return
+            
+            # Verifica a temperatura do hotend
+            current_temps = self._printer.get_current_temperatures()
+            extruder_temp = current_temps.get('tool0', {}).get('actual', 0)
+            
+            threshold_temp = self.config.get('shutdown_temp_threshold', 50)
+            
+            if extruder_temp <= threshold_temp:
+                self._logger.info(f"Todas as condições atendidas - UPS na bateria: {on_battery}, Crítico: {critical}, Temperatura: {extruder_temp}°C ≤ {threshold_temp}°C. Desligando UPS.")
+                self.ups.shutdown()
+                self._pending_shutdown = False
+            else:
+                self._logger.debug(f"Aguardando temperatura diminuir. UPS na bateria: {on_battery}, Crítico: {critical}, Temperatura atual: {extruder_temp}°C, Limite: {threshold_temp}°C")
+                
+        except Exception as e:
+            self._logger.error(f"Erro ao verificar condições para shutdown: {e}")
+            # Em caso de erro, verifica se ainda estamos em condição crítica antes do shutdown
+            try:
+                ups_status = self.ups.get_status()
+                if ups_status and ups_status.get('on_battery', False) and ups_status.get('critical', False):
+                    self._logger.info("Erro ao verificar temperatura, mas UPS ainda em condição crítica. Fazendo shutdown por segurança.")
+                    self.ups.shutdown()
+                else:
+                    self._logger.info("Erro ao verificar temperatura, mas UPS não está mais crítico. Cancelando shutdown.")
+            except:
+                self._logger.error("Erro adicional ao verificar status do UPS. Cancelando shutdown por segurança.")
+            self._pending_shutdown = False
 
 
     def _hook_comm_protocol_scripts(self, comm_instance, script_type, script_name, *args, **kwargs):
@@ -154,6 +219,46 @@ class UPS(octoprint.plugin.StartupPlugin,
             return (None, None, dict(initiated_pause=self._pause_event.is_set()))
         
         elif script_name == 'beforePrintResumed':
+            # Verifica se deve bloquear retomar impressão sem energia da rede
+            if self.config.get('block_resume_on_battery', True):
+                try:
+                    ups_status = self.ups.get_status()
+                    if not ups_status:
+                        self._logger.warning("Tentativa de retomar impressão bloqueada: UPS desligado ou indisponível.")
+                        # Retorna comandos que mostram mensagem de erro no terminal
+                        error_commands = [
+                            "M117 ERRO: UPS offline",  # Mensagem no display da impressora
+                            "; ERRO: Não é possível retomar a impressão - UPS desligado ou indisponível",
+                            "; Verifique a conexão e status do UPS antes de retomar"
+                        ]
+                        return (error_commands, None, dict(initiated_pause=False))
+                    
+                    on_battery = ups_status.get('on_battery', False)
+                    if on_battery:
+                        self._logger.warning("Tentativa de retomar impressão bloqueada: UPS está na bateria (sem energia da rede).")
+                        # Retorna comandos que mostram mensagem de erro no terminal
+                        error_commands = [
+                            "M117 ERRO: UPS na bateria",  # Mensagem no display da impressora
+                            "; ERRO: Não é possível retomar a impressão - UPS está na bateria",
+                            "; Aguarde a energia da rede ser restaurada antes de retomar"
+                        ]
+                        return (error_commands, None, dict(initiated_pause=False))
+                        
+                except Exception as e:
+                    self._logger.error(f"Erro ao verificar status do UPS para retomar: {e}")
+                    self._logger.warning("Erro ao verificar UPS. Bloqueando retomar por segurança.")
+                    error_commands = [
+                        "M117 ERRO: Falha UPS",  # Mensagem no display da impressora
+                        "; ERRO: Falha ao verificar status do UPS",
+                        "; Verifique a conexão antes de retomar"
+                    ]
+                    return (error_commands, None, dict(initiated_pause=False))
+                    
+                # UPS ligado e com energia da rede, pode retomar normalmente
+                self._logger.info("UPS ligado e com energia da rede. Permitindo retomar impressão.")
+            else:
+                self._logger.info("Proteção de retomar sem energia da rede está desabilitada.")
+            
             # Reestabelece as temperaturas antes de retomar
             gcode_commands = []
             
@@ -177,8 +282,9 @@ class UPS(octoprint.plugin.StartupPlugin,
             except Exception as e:
                 self._logger.error(f"Erro ao reestabelecer temperaturas: {e}")
             
-            # Limpa o evento de pausa após processar
+            # Limpa o evento de pausa e pending shutdown após processar
             self._pause_event.clear()
+            self._pending_shutdown = False
             
             # Retorna os comandos G-code para serem executados
             return (gcode_commands, None, dict(initiated_pause=True))
@@ -189,9 +295,31 @@ class UPS(octoprint.plugin.StartupPlugin,
     def on_event(self, event, payload):
         if event == Events.CLIENT_OPENED:
             self._plugin_manager.send_plugin_message(self._identifier, dict(vars=self.vars))
-        if event == Events.PRINT_PAUSED and self._pause_event.is_set():
-            self._logger.info("Impressão pausada. Enviando comando de shutdown para o UPS.")
-            self.ups.shutdown()
+        elif event in [Events.PRINT_CANCELLED, Events.PRINT_DONE]:
+            # Limpa pending shutdown se a impressão for cancelada ou finalizada
+            self._pending_shutdown = False
+            self._pause_event.clear()
+        elif event == Events.PRINT_RESUMED:
+            # Verifica se a impressão foi retomada sem energia da rede
+            if self.config.get('block_resume_on_battery', True):
+                try:
+                    ups_status = self.ups.get_status()
+                    if not ups_status:
+                        self._logger.error("ALERTA: Impressão foi retomada com UPS desligado/indisponível!")
+                        # Pausa novamente imediatamente
+                        self._logger.info("Pausando impressão novamente por segurança.")
+                        self._printer.pause_print(tag={"source:plugin", "plugin:ups", "reason:ups_offline"})
+                    elif ups_status.get('on_battery', False):
+                        self._logger.error("ALERTA: Impressão foi retomada enquanto UPS está na bateria!")
+                        # Pausa novamente imediatamente
+                        self._logger.info("Pausando impressão novamente por segurança.")
+                        self._printer.pause_print(tag={"source:plugin", "plugin:ups", "reason:ups_on_battery"})
+                except Exception as e:
+                    self._logger.error(f"Erro ao verificar status do UPS após retomar: {e}")
+                    # Em caso de erro, pausa por segurança
+                    self._logger.info("Erro ao verificar UPS. Pausando impressão por segurança.")
+                    self._printer.pause_print(tag={"source:plugin", "plugin:ups", "reason:ups_check_error"})
+        # Removido o shutdown automático - agora é controlado por temperatura
 
 
     def get_api_commands(self):
@@ -216,12 +344,26 @@ class UPS(octoprint.plugin.StartupPlugin,
 
 
     def get_settings_version(self):
-        return 1
+        return 2
 
 
     def on_settings_migrate(self, target, current=None):
         if current is None:
             current = 0
+        
+        if current < 2:
+            # Migração para versão 2 - adiciona novas configurações
+            self._logger.info("Migrando configurações do UPS para versão 2")
+            
+            # Força recarregamento das configurações padrão
+            if not self._settings.has(['shutdown_temp_threshold']):
+                self._settings.set(['shutdown_temp_threshold'], 50)
+                
+            if not self._settings.has(['block_resume_on_battery']):
+                self._settings.set(['block_resume_on_battery'], True)
+                
+            self._settings.save()
+            self._logger.info("Migração concluída - novas configurações adicionadas")
 
 
     def get_template_configs(self):
@@ -270,9 +412,13 @@ def __plugin_load__():
         "octoprint.comm.protocol.scripts": __plugin_implementation__._hook_comm_protocol_scripts
     }
 
-import os
-if os.environ.get("OCTOPRINT_DEBUGPY", "0") == "1":
-    import debugpy
-    debugpy.listen(("0.0.0.0", 5678))
-    print("Aguardando debugger conectar...")
-    debugpy.wait_for_client()
+# Código de debug comentado
+# import os
+# if os.environ.get("OCTOPRINT_DEBUGPY", "0") == "1":
+#     try:
+#         import debugpy
+#         debugpy.listen(("0.0.0.0", 5678))
+#         print("Aguardando debugger conectar...")
+#         debugpy.wait_for_client()
+#     except ImportError:
+#         print("debugpy não está disponível")
