@@ -1,0 +1,17 @@
+[33ma2d90ef[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m Criação de diversas rotinas para salvar a posição da impressão na pausa.
+[33m0d2a1f0[m Criação de vários recursos relacionados a desligar o UPS apenas quando o hotend estiver em temperatura segura.
+[33m07aabda[m Ajustes controlar as temperaturas da mesa e do hotend.
+[33m75284da[m Criação de recursos para salvar as temperaturas ao pausar e restaurar ao reiniciar.
+[33m6c63948[m Ajustes gerais para o hint do estado do UPS
+[33mc45acbe[m Ajustes e comentários.
+[33m6145c28[m[33m ([m[1;33mtag: 0.0.1[m[33m)[m Ajustes retornando ups.js e ups_navbar.jinja2
+[33m5d0faab[m Ajustes no js e no html
+[33m6358b52[m Ajuste no js
+[33m2597bd8[m Ajustes para desligar o ups depois que a impressora tiver pausado.
+[33m6682a11[m Ajustes para o teste do endpoint que desliga o ups via postman
+[33m5f74a9e[m Ajustes para ter um comando shutdown_ups para testar comunicação
+[33m2cecedb[m[33m ([m[1;31morigin/esphome[m[33m, [m[1;32mespome[m[33m)[m Ajustes gerais
+[33md3eb9d6[m Ajustes gerais.
+[33m85edab9[m Ajustes
+[33m7fc884e[m Primeiras alterações para testar com esphome
+[33mb032187[m Initial commit
